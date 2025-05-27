@@ -414,4 +414,4 @@ MIT
 ## 更多 API 与协议细节
 
 - 推荐直接阅读 `lib/xbot/client.py`，每个 API 方法均有注释和参数说明。
-- xbot 后端服务需单独部署，详见 [xbot/gewechat 官方文档](https://github.com/Devo919/Gewechat)。
+- xbot 后端服务需单独部署
