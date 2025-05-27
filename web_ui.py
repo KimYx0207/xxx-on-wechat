@@ -15,52 +15,43 @@ from plugins import *
 logger = getLogger(__name__)
 current_process_instance = None
 
-def check_gewechat_online():
-    """检查gewechat用户是否在线
-    Returns:
-        tuple: (是否在线, 错误信息)
+def check_xbot_online():
+    """检查xbot用户是否在线
     """
+    if conf().get("channel_type") != "xbot":
+        return False, "非xbot，无需检查"
+    base_url = conf().get("xbot_base_url")
+    token = conf().get("xbot_token")
+    app_id = conf().get("xbot_app_id")
+    if not base_url or not token or not app_id:
+        return False, "xbot配置不完整"
+    from lib.xbot.client import XBotClient
+    client = XBotClient(base_url, token)
     try:
-        if conf().get("channel_type") != "gewechat":
-            return False, "非gewechat，无需检查"
-        
-        base_url = conf().get("gewechat_base_url")
-        token = conf().get("gewechat_token")
-        app_id = conf().get("gewechat_app_id")
-        if not all([base_url, token, app_id]):
-            return False, "gewechat配置不完整"
-
-        from lib.gewechat.client import GewechatClient
-        client = GewechatClient(base_url, token)
-        online_status = client.check_online(app_id)
-        
-        if not online_status:
-            return False, "获取在线状态失败"
-            
-        if not online_status.get('data', False):
-            logger.info("Gewechat用户未在线")
-            return False, "用户未登录"
-            
-        return True, None
-        
+        online = client.check_online(app_id)
+        if online:
+            return True, "在线"
+        else:
+            logger.info("XBot用户未在线")
+            return False, "未在线"
     except Exception as e:
-        logger.error(f"检查gewechat在线状态失败: {str(e)}")
-        return False, f"检查在线状态出错: {str(e)}"
+        logger.error(f"检查xbot在线状态失败: {str(e)}")
+        return False, str(e)
 
-def get_gewechat_profile():
-    """获取gewechat用户信息并下载头像，仅在用户在线时返回信息"""
+def get_xbot_profile():
+    """获取xbot用户信息并下载头像，仅在用户在线时返回信息"""
     try:
-        is_online, error_msg = check_gewechat_online()
+        is_online, error_msg = check_xbot_online()
         if not is_online:
-            logger.info(f"Gewechat状态检查: {error_msg}")
+            logger.info(f"XBot状态检查: {error_msg}")
             return None, None
             
-        from lib.gewechat.client import GewechatClient
-        base_url = conf().get("gewechat_base_url")
-        token = conf().get("gewechat_token")
-        app_id = conf().get("gewechat_app_id")
+        from lib.xbot.client import XBotClient
+        base_url = conf().get("xbot_base_url")
+        token = conf().get("xbot_token")
+        app_id = conf().get("xbot_app_id")
         
-        client = GewechatClient(base_url, token)
+        client = XBotClient(base_url, token)
         profile = client.get_profile(app_id)
         
         if not profile or 'data' not in profile:
@@ -87,7 +78,7 @@ def get_gewechat_profile():
                 
         return nickname, avatar_path
     except Exception as e:
-        logger.error(f"获取Gewechat用户信息失败: {str(e)}")
+        logger.error(f"获取XBot用户信息失败: {str(e)}")
         return None, None
 
 def start_channel(channel_name: str):
@@ -115,9 +106,9 @@ def run():
         # create channel
         channel_name = conf().get("channel_type", "wx")
         
-        # 获取gewechat用户信息
-        if channel_name == "gewechat":
-            get_gewechat_profile()
+        # 获取xbot用户信息
+        if channel_name == "xbot":
+            get_xbot_profile()
 
         start_channel(channel_name)
     except Exception as e:
@@ -147,8 +138,8 @@ def start_run():
             gr.update(visible=False)  # 头像
         )
         
-    if conf().get("channel_type") == "gewechat":
-        nickname, _ = get_gewechat_profile()
+    if conf().get("channel_type") == "xbot":
+        nickname, _ = get_xbot_profile()
         if nickname:
             return (
                 gr.update(value=f"重启成功😀 [{nickname}]🤖  已在线✅"), # 状态
@@ -205,20 +196,20 @@ def login(username, password):
         # 获取用户信息
         nickname = None
         avatar_path = None
-        is_gewechat = conf().get("channel_type") == "gewechat"
+        is_xbot = conf().get("channel_type") == "xbot"
         
-        if is_gewechat:
-            nickname, avatar_path = get_gewechat_profile()
+        if is_xbot:
+            nickname, avatar_path = get_xbot_profile()
             
         # 根据不同情况决定显示二维码还是头像
-        show_qrcode = not (is_gewechat and avatar_path)
+        show_qrcode = not (is_xbot and avatar_path)
         
         # 设置状态信息
         status_text = "启动成功😀 " + (f"[{nickname}]🤖  已在线✅" if nickname else "")
             
         return (
             gr.update(visible=True, value=status_text),  # 在顶部状态栏显示状态
-            gr.update(visible=show_qrcode),  # 只在非gewechat或gewechat未登录时显示二维码
+            gr.update(visible=show_qrcode),  # 只在非xbot或xbot未登录时显示二维码
             gr.update(visible=True), 
             gr.update(visible=show_qrcode),  # 刷新二维码按钮也只在显示二维码时可见
             gr.update(visible=False),  # Hide username input
@@ -248,10 +239,10 @@ def logout():
         tuple: (状态文本, 刷新按钮, 刷新状态按钮, 重启按钮, 退出按钮, 二维码, 头像)
     """
     try:
-        # 检查是否是 gewechat 且在线
-        if conf().get("channel_type") != "gewechat" or not check_gewechat_online()[0]:
+        # 检查是否是 xbot 且在线
+        if conf().get("channel_type") != "xbot" or not check_xbot_online()[0]:
             return (
-                gr.update(value="非gewechat或不在线，无需退出登录😭"), # 状态
+                gr.update(value="非xbot或不在线，无需退出登录😭"), # 状态
                 gr.update(visible=True), # 刷新二维码按钮
                 gr.update(visible=True), # 刷新状态按钮
                 gr.update(visible=True), # 重启按钮
@@ -260,14 +251,14 @@ def logout():
                 gr.update(visible=False) # 头像
             )
 
-        # 调用 gewechat 退出接口
-        from lib.gewechat.client import GewechatClient
-        base_url = conf().get("gewechat_base_url")
-        token = conf().get("gewechat_token")
-        app_id = conf().get("gewechat_app_id")
+        # 调用 xbot 退出接口
+        from lib.xbot.client import XBotClient
+        base_url = conf().get("xbot_base_url")
+        token = conf().get("xbot_token")
+        app_id = conf().get("xbot_app_id")
         if not all([base_url, token, app_id]):
             return (
-                gr.update(value="gewechat配置不完整，无法退出登录😭"), # 状态
+                gr.update(value="xbot配置不完整，无法退出登录😭"), # 状态
                 gr.update(visible=False), # 刷新二维码按钮
                 gr.update(visible=True), # 刷新状态按钮
                 gr.update(visible=True), # 重启按钮
@@ -276,7 +267,7 @@ def logout():
                 gr.update(visible=True) # 头像
             )
         
-        client = GewechatClient(base_url, token)
+        client = XBotClient(base_url, token)
         result = client.logout(app_id)
         
         if not result or result.get('ret') != 200:
@@ -353,15 +344,15 @@ def refresh_login_status():
     Returns:
         tuple: (状态文本, 是否显示二维码, 头像)
     """
-    is_gewechat = conf().get("channel_type") == "gewechat"
-    if not is_gewechat:
+    is_xbot = conf().get("channel_type") == "xbot"
+    if not is_xbot:
         return (
-            gr.update(value="登录状态刷新成功😀 非gewechat，无需检查登录状态"),
+            gr.update(value="登录状态刷新成功😀 非xbot，无需检查登录状态"),
             gr.update(visible=True),
             gr.update(visible=False)
         )
         
-    nickname, avatar_path = get_gewechat_profile()
+    nickname, avatar_path = get_xbot_profile()
     if nickname:
         return (
             gr.update(value=f"登录状态刷新成功😀 [{nickname}]🤖  已在线✅"),

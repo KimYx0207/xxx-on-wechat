@@ -14,5 +14,9 @@
   "voice_reply_voice": true,
   "voice_to_text": "dify",
   "text_to_voice": "dify",
-  "xbot_base_url": "http://192.168.6.19:9011/api"
+  "xbot_token": "",
+  "xbot_app_id": "",
+  "xbot_base_url": "http://192.168.6.19:9011/api",
+  "xbot_callback_url": "",
+  "xbot_download_url": ""
 }

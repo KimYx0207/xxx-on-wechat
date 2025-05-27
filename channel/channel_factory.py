@@ -49,7 +49,7 @@ def create_channel(channel_type) -> Channel:
         from channel.dingtalk.dingtalk_channel import DingTalkChanel
         ch = DingTalkChanel()
     elif channel_type == "xbot":
-        from channel.gewechat.gewechat_channel import XBotChannel
+        from channel.xbot.gewechat_channel import XBotChannel
         ch = XBotChannel()
     else:
         raise RuntimeError

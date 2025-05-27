@@ -212,7 +212,11 @@ available_setting = {
     "Minimax_base_url": "",
     "web_port": 9899,
     # xbot新协议配置
-    "xbot_base_url": "",  # xbot API服务地址
+    "xbot_token": "",
+    "xbot_app_id": "",
+    "xbot_base_url": "",
+    "xbot_callback_url": "",
+    "xbot_download_url": "",
 }
 
 
