@@ -7,7 +7,7 @@
   "model": "dify",
   "single_chat_prefix": [""],
   "single_chat_reply_prefix": "",
-  "group_chat_prefix": ["@bot","学姐"],
+  "group_chat_prefix": ["@bot","小小x","学姐"],
   "group_name_white_list": ["ALL_GROUP"],
   "image_recognition": true,
   "speech_recognition": true,

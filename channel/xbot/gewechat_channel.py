@@ -5,6 +5,14 @@ import threading
 import uuid
 import base64
 import requests
+import tempfile
+import urllib.request
+from pydub import AudioSegment
+from io import BytesIO
+import pysilk
+import subprocess
+from PIL import Image
+import io
 
 from bridge.context import Context, ContextType
 from bridge.reply import Reply, ReplyType
@@ -177,11 +185,318 @@ class XBotChannel(ChatChannel):
                 
             elif reply.type == ReplyType.VOICE:
                 # 语音消息
-                # 自动检测语音时长，默认为5秒
-                voice_time = 5000
-                voice_type = 0  # AMR 格式
-                self.client.send_voice(self.wxid, receiver, reply.content, voice_type, voice_time)
-                logger.info(f"[xbot] send voice to {receiver}")
+                try:
+                    import os
+                    import base64
+                    import subprocess
+                    import tempfile
+                    
+                    voice_file = reply.content
+                    
+                    # 记录开始处理
+                    logger.info(f"[xbot] 开始处理语音: {voice_file}")
+                    
+                    # 获取文件格式和音频类型
+                    file_ext = os.path.splitext(voice_file)[1].lower().replace('.', '')
+                    logger.info(f"[xbot] 语音文件格式: {file_ext}, 大小: {os.path.getsize(voice_file)}字节")
+                    
+                    # 对于MP3格式，先转换为AMR格式再发送
+                    final_voice_file = voice_file
+                    converted_file = None
+                    voice_format = 0  # 默认使用AMR格式
+                    
+                    if file_ext == 'mp3':
+                        try:
+                            # 创建临时AMR文件
+                            fd, amr_file = tempfile.mkstemp(suffix='.amr')
+                            os.close(fd)
+                            
+                            # 使用ffmpeg转换为AMR
+                            cmd = [
+                                "ffmpeg", 
+                                "-y",          # 覆盖输出
+                                "-i", voice_file,  # 输入文件
+                                "-ar", "8000",  # 采样率
+                                "-ab", "12.2k",  # 比特率
+                                "-ac", "1",    # 单声道
+                                amr_file       # 输出文件
+                            ]
+                            
+                            process = subprocess.run(
+                                cmd, 
+                                stdout=subprocess.PIPE, 
+                                stderr=subprocess.PIPE, 
+                                text=True, 
+                                check=False
+                            )
+                            
+                            if process.returncode == 0 and os.path.exists(amr_file) and os.path.getsize(amr_file) > 0:
+                                logger.info(f"[xbot] MP3转换为AMR成功: {amr_file}, 大小: {os.path.getsize(amr_file)}字节")
+                                final_voice_file = amr_file
+                                converted_file = amr_file
+                                voice_format = 0  # AMR格式
+                            else:
+                                logger.warning(f"[xbot] MP3转换为AMR失败: {process.stderr}")
+                                # 转换失败时仍使用原始MP3
+                                voice_format = 2  # MP3格式
+                        except Exception as e:
+                            logger.warning(f"[xbot] MP3转换为AMR异常: {e}")
+                            voice_format = 2  # 失败时使用MP3格式
+                    elif file_ext == 'amr':
+                        voice_format = 0  # AMR格式
+                    elif file_ext == 'wav':
+                        voice_format = 3  # WAV格式 
+                    else:
+                        voice_format = 2  # 默认按MP3处理
+                        
+                    # 读取语音文件
+                    with open(final_voice_file, "rb") as f:
+                        voice_byte = f.read()
+                        voice_base64 = base64.b64encode(voice_byte).decode()
+                    
+                    # 获取音频时长 - 尝试多种方法
+                    voice_time = None
+                    
+                    # 方法1：尝试使用pydub获取时长
+                    try:
+                        audio = AudioSegment.from_file(final_voice_file)
+                        voice_time = len(audio)  # 毫秒
+                        logger.info(f"[xbot] 使用pydub获取音频时长: {voice_time}毫秒")
+                    except Exception as e:
+                        logger.warning(f"[xbot] 使用pydub获取音频时长失败: {e}")
+                    
+                    # 方法2：尝试使用mutagen获取时长
+                    if voice_time is None:
+                        try:
+                            if file_ext == 'mp3':
+                                from mutagen.mp3 import MP3
+                                audio = MP3(final_voice_file)
+                                if audio.info and hasattr(audio.info, 'length'):
+                                    voice_time = int(audio.info.length * 1000)
+                                    logger.info(f"[xbot] 使用mutagen获取MP3时长: {voice_time}毫秒")
+                            elif file_ext == 'wav':
+                                from mutagen.wave import WAVE
+                                audio = WAVE(final_voice_file)
+                                if audio.info and hasattr(audio.info, 'length'):
+                                    voice_time = int(audio.info.length * 1000)
+                                    logger.info(f"[xbot] 使用mutagen获取WAV时长: {voice_time}毫秒")
+                            elif file_ext == 'amr':
+                                # AMR格式没有直接支持，使用文件大小估算
+                                file_size = os.path.getsize(final_voice_file)
+                                # 粗略估计：AMR语音平均比特率约为8kbps
+                                voice_time = int((file_size * 8) / 8000 * 1000)
+                                logger.info(f"[xbot] 基于文件大小估算AMR时长: {voice_time}毫秒")
+                        except Exception as e:
+                            logger.warning(f"[xbot] 使用mutagen获取音频时长失败: {e}")
+                    
+                    # 兜底：未能获取时长则设置一个保守的值
+                    if voice_time is None or voice_time < 1000:  # 至少1秒
+                        voice_time = 6000  # 默认6秒
+                        logger.warning(f"[xbot] 未能获取有效时长，使用默认值: {voice_time}毫秒")
+                    elif voice_time > 60000:  # 不超过60秒
+                        voice_time = 60000
+                        logger.warning(f"[xbot] 时长超过限制，设置为最大值: {voice_time}毫秒")
+                    
+                    logger.info(f"[xbot] 最终语音时长: {voice_time}毫秒, 格式类型: {voice_format}")
+                    
+                    # 构造API参数
+                    data = {
+                        "Wxid": self.wxid,
+                        "ToWxid": receiver,
+                        "Base64": voice_base64,
+                        "Type": voice_format,
+                        "VoiceTime": voice_time
+                    }
+                    
+                    # 发送请求
+                    url = f"{self.base_url.rstrip('/')}/Msg/SendVoice"
+                    logger.info(f"[xbot] 发送语音请求: {url}, 接收者={receiver}, 格式={voice_format}")
+                    
+                    resp = requests.post(url, json=data, timeout=10)
+                    success = False
+                    
+                    if resp.status_code == 200:
+                        try:
+                            json_resp = resp.json()
+                            if json_resp.get("Success"):
+                                logger.info(f"[xbot] 语音发送成功: {receiver}")
+                                success = True
+                            else:
+                                logger.error(f"[xbot] 语音发送失败: {json_resp}")
+                                # 如果失败且不是AMR格式，尝试以AMR格式重试
+                                if voice_format != 0 and file_ext != 'amr':
+                                    logger.info(f"[xbot] 尝试以AMR格式重新发送语音")
+                                    data["Type"] = 0
+                                    resp = requests.post(url, json=data, timeout=10)
+                                    if resp.status_code == 200 and resp.json().get("Success"):
+                                        logger.info(f"[xbot] 以AMR格式重新发送成功: {receiver}")
+                                        success = True
+                                    else:
+                                        logger.error(f"[xbot] 以AMR格式重新发送失败: {resp.text[:200]}")
+                        except Exception as e:
+                            logger.error(f"[xbot] 解析响应失败: {e}, 响应: {resp.text[:200]}")
+                    else:
+                        logger.error(f"[xbot] 语音发送请求失败: 状态码={resp.status_code}, 响应={resp.text[:200]}")
+                    
+                    # 清理临时文件
+                    if converted_file and os.path.exists(converted_file):
+                        try:
+                            os.remove(converted_file)
+                            logger.info(f"[xbot] 已清理临时转换文件: {converted_file}")
+                        except Exception as e:
+                            logger.warning(f"[xbot] 清理临时文件失败: {e}")
+                    
+                    # 如果发送失败，发送文字提示
+                    if not success:
+                        try:
+                            error_msg = "语音发送失败，请稍后再试"
+                            self.client.send_text(self.wxid, receiver, error_msg)
+                        except:
+                            pass
+                
+                except Exception as e:
+                    logger.error(f"[xbot] 语音处理异常: {e}")
+                    # 不再抛出异常，避免中断整个发送过程
+                    try:
+                        error_msg = f"语音发送失败，请稍后再试"
+                        self.client.send_text(self.wxid, receiver, error_msg)
+                    except:
+                        pass
+                
+            elif reply.type == ReplyType.VIDEO_URL:
+                # 视频URL消息
+                try:
+                    import tempfile
+                    import os
+                    import base64
+                    
+                    video_url = reply.content
+                    logger.info(f"[xbot] 开始处理视频URL: {video_url}")
+                    
+                    if not video_url:
+                        logger.error("[xbot] 视频URL为空")
+                        self.client.send_text(self.wxid, receiver, "视频URL无效")
+                        return
+                    
+                    # 下载视频
+                    headers = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36"
+                    }
+                    
+                    # 创建临时文件保存视频
+                    temp_path = None
+                    try:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as temp_file:
+                            temp_path = temp_file.name
+                        
+                        logger.info(f"[xbot] 正在下载视频至临时文件: {temp_path}")
+                        
+                        # 下载视频到临时文件
+                        with open(temp_path, 'wb') as f:
+                            response = requests.get(video_url, headers=headers, stream=True, timeout=60)
+                            response.raise_for_status()
+                            total_size = int(response.headers.get('Content-Length', 0))
+                            downloaded = 0
+                            
+                            for chunk in response.iter_content(chunk_size=8192):
+                                if chunk:
+                                    f.write(chunk)
+                                    downloaded += len(chunk)
+                                    percent = int(downloaded / total_size * 100) if total_size > 0 else 0
+                                    if percent % 20 == 0:  # 每20%记录一次
+                                        logger.info(f"[xbot] 视频下载进度: {percent}%")
+                        
+                        content_type = response.headers.get('Content-Type', '')
+                        logger.info(f"[xbot] 视频下载完成: {temp_path}, 内容类型: {content_type}, 大小: {downloaded}字节")
+                        
+                        # 用ffmpeg提取第一帧为缩略图
+                        thumb_path = temp_path + "_thumb.jpg"
+                        try:
+                            import subprocess
+                            cmd = [
+                                "ffmpeg", "-y", "-i", temp_path,
+                                "-vf", "select=eq(n\\,0)", "-q:v", "2", "-frames:v", "1", thumb_path
+                            ]
+                            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+                        except Exception as e:
+                            logger.warning(f"[xbot] ffmpeg提取缩略图失败: {e}")
+                            thumb_path = None
+                        
+                        # 用ffprobe获取视频时长
+                        video_length = 10
+                        try:
+                            cmd = [
+                                "ffprobe", "-v", "error", "-show_entries",
+                                "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", temp_path
+                            ]
+                            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+                            duration = float(result.stdout.decode().strip())
+                            video_length = int(duration)
+                        except Exception as e:
+                            logger.warning(f"[xbot] ffprobe获取视频时长失败: {e}")
+                        
+                        # 读取视频和缩略图为base64
+                        with open(temp_path, 'rb') as f:
+                            video_base64 = base64.b64encode(f.read()).decode('utf-8')
+                        if thumb_path and os.path.exists(thumb_path):
+                            with open(thumb_path, 'rb') as f:
+                                thumb_data = base64.b64encode(f.read()).decode('utf-8')
+                        else:
+                            thumb_data = ""
+                        
+                        logger.info(f"[xbot] 视频Base64大小: {len(video_base64)}, 时长: {video_length}秒")
+                        
+                        # 构造请求数据
+                        data = {
+                            "Wxid": self.wxid,
+                            "ToWxid": receiver,
+                            "Base64": "data:video/mp4;base64," + video_base64,
+                            "ImageBase64": "data:image/jpeg;base64," + thumb_data,
+                            "PlayLength": video_length
+                        }
+                        
+                        # 发送请求
+                        url = f"{self.base_url.rstrip('/')}/Msg/SendVideo"
+                        logger.info(f"[xbot] 发送视频请求: {url}, 数据大小: {len(video_base64)//1024}KB")
+                        
+                        resp = requests.post(url, json=data, timeout=60)  # 增大超时时间
+                        
+                        # 清理临时文件
+                        if temp_path and os.path.exists(temp_path):
+                            try:
+                                os.remove(temp_path)
+                                logger.debug(f"[xbot] 已清理临时视频文件: {temp_path}")
+                            except Exception as e:
+                                logger.warning(f"[xbot] 清理临时文件失败: {e}")
+                        
+                        if resp.status_code == 200:
+                            try:
+                                resp_data = resp.json()
+                                if resp_data.get("Success"):
+                                    logger.info(f"[xbot] 发送视频成功: {receiver}")
+                                else:
+                                    logger.error(f"[xbot] 发送视频失败: {resp_data}")
+                                    # 发送错误消息
+                                    self.client.send_text(self.wxid, receiver, "视频发送失败，请稍后再试")
+                            except Exception as e:
+                                logger.error(f"[xbot] 视频响应解析错误: {e}")
+                                self.client.send_text(self.wxid, receiver, "视频发送过程中出现错误")
+                        else:
+                            logger.error(f"[xbot] 视频API请求失败: {resp.status_code}, {resp.text}")
+                            self.client.send_text(self.wxid, receiver, "视频发送请求失败，请稍后再试")
+                            
+                    except Exception as download_err:
+                        logger.error(f"[xbot] 视频下载失败: {download_err}")
+                        self.client.send_text(self.wxid, receiver, "视频下载失败，请稍后再试")
+                        # 清理临时文件
+                        if temp_path and os.path.exists(temp_path):
+                            try:
+                                os.remove(temp_path)
+                            except:
+                                pass
+                except Exception as e:
+                    logger.error(f"[xbot] 处理视频URL异常: {e}")
+                    self.client.send_text(self.wxid, receiver, "处理视频时出错，请稍后再试")
                 
             elif reply.type == ReplyType.VIDEO:
                 # 视频消息

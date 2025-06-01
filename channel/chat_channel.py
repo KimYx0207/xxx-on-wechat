@@ -220,6 +220,11 @@ class ChatChannel(Channel):
                         pattern = f"@{re.escape(context['msg'].self_display_name)}(\u2005|\u0020)"
                         subtract_res = re.sub(pattern, r"", content)
                     content = subtract_res
+                    
+                    # 新增：彻底清理所有@前缀，确保传递给插件的是干净的命令
+                    content = re.sub(r"^@\S+\s+", "", content)
+                    logger.debug(f"[chat_channel] after cleaning all @ prefixes: {content}")
+                    
                 if not flag:
                     logger.debug(f"[chat_channel] group message not match any produce condition, skip. content={content}")
                     return None
