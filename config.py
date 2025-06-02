@@ -217,6 +217,7 @@ available_setting = {
     "xbot_base_url": "",
     "xbot_callback_url": "",
     "xbot_download_url": "",
+    "xbot_qr_api": "ipad",
 }
 
 

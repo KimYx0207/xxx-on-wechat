@@ -87,15 +87,25 @@ class XBotChannel(ChatChannel):
             raise Exception("未获取到二维码链接或uuid，请检查后端API返回结构")
         logger.info(f"[xbot] 请扫码登录: {qr_url} (uuid: {uuid_code})")
         # 轮询检查扫码，每秒一次
-        for _ in range(240):
-            check = self.client.check_qr(uuid_code)
-            if check.get("Data", {}).get("Status") == 1:
-                wxid = check.get("Data", {}).get("Wxid")
-                self.wxid = wxid
-                self.robot_stat = {"wxid": wxid, "device_id": self.device_id, "device_name": self.device_name}
-                XBotClient.save_robot_stat(ROBOT_STAT_PATH, self.robot_stat)
-                logger.info(f"[xbot] 登录成功: wxid={wxid}")
-                return
+        for i in range(240):
+            try:
+                logger.info(f"[xbot] 正在检测二维码状态，第{i+1}次，uuid={uuid_code}")
+                check = self.client.check_qr(uuid_code)
+                logger.info(f"[xbot] 检查结果: {check}")
+                data = check.get("Data", {})
+                message = check.get("Message", "")
+                if message == "登录成功":
+                    wxid = data.get("acctSectResp", {}).get("userName") or data.get("Wxid")
+                    self.wxid = wxid
+                    self.robot_stat = {"wxid": wxid, "device_id": self.device_id, "device_name": self.device_name}
+                    XBotClient.save_robot_stat(ROBOT_STAT_PATH, self.robot_stat)
+                    logger.info(f"[xbot] 登录成功: wxid={wxid}")
+                    return
+                elif data.get("Status") == 1 or data.get("status") == 1:
+                    logger.info("[xbot] 已扫码，等待登录确认...")
+                # 其他情况继续轮询
+            except Exception as e:
+                logger.error(f"[xbot] 检查二维码状态异常: {e}")
             time.sleep(1)
         raise Exception("扫码超时，请重启程序重试")
 

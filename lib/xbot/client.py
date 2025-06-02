@@ -30,7 +30,19 @@ class XBotClient:
         Returns:
             返回登录二维码信息，包含 QrUrl 和 Uuid
         """
-        url = self.base_url + '/Login/LoginGetQR'
+        # 动态选择接口
+        try:
+            from config import conf
+            api_map = {
+                "ipad": "LoginGetQR",
+                "pad": "LoginGetQRPad",
+                "mac": "LoginGetQRMac"
+            }
+            qr_api_key = conf().get("xbot_qr_api", "ipad").lower()
+            qr_api = api_map.get(qr_api_key, "LoginGetQR")
+        except Exception:
+            qr_api = "LoginGetQR"
+        url = self.base_url + f'/Login/{qr_api}'
         data = {"DeviceId": device_id, "DeviceName": device_name}
         try:
             resp = requests.post(url, json=data, timeout=60)
@@ -38,8 +50,6 @@ class XBotClient:
             result = resp.json()
             if not result.get("Success", True):
                 raise Exception(f"获取二维码失败: {result.get('Message', result)}")
-            # 日志输出完整返回内容
-            print(f"[xbot] get_qr 返回: {result}")
             # 优先取QrUrl字段
             qr_url = None
             if result.get("Data"):
