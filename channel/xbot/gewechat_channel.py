@@ -13,6 +13,8 @@ import pysilk
 import subprocess
 from PIL import Image
 import io
+import qrcode
+import sys
 
 from bridge.context import Context, ContextType
 from bridge.reply import Reply, ReplyType
@@ -86,14 +88,21 @@ class XBotChannel(ChatChannel):
             logger.error(f"[xbot] 未获取到二维码链接或uuid，返回内容: {qr_resp}")
             raise Exception("未获取到二维码链接或uuid，请检查后端API返回结构")
         logger.info(f"[xbot] 请扫码登录: {qr_url} (uuid: {uuid_code})")
+        # 控制台渲染二维码
+        try:
+            qr = qrcode.QRCode(border=1)
+            qr.add_data(qr_url)
+            qr.make(fit=True)
+            qr.print_ascii(out=sys.stdout)
+        except Exception as e:
+            logger.warning(f"[xbot] 控制台二维码渲染失败: {e}")
         # 轮询检查扫码，每秒一次
         for i in range(240):
             try:
-                logger.info(f"[xbot] 正在检测二维码状态，第{i+1}次，uuid={uuid_code}")
                 check = self.client.check_qr(uuid_code)
-                logger.info(f"[xbot] 检查结果: {check}")
                 data = check.get("Data", {})
                 message = check.get("Message", "")
+                expired = data.get("expiredTime", 240 - i)
                 if message == "登录成功":
                     wxid = data.get("acctSectResp", {}).get("userName") or data.get("Wxid")
                     self.wxid = wxid
@@ -102,8 +111,9 @@ class XBotChannel(ChatChannel):
                     logger.info(f"[xbot] 登录成功: wxid={wxid}")
                     return
                 elif data.get("Status") == 1 or data.get("status") == 1:
-                    logger.info("[xbot] 已扫码，等待登录确认...")
-                # 其他情况继续轮询
+                    logger.info(f"[xbot] 等待登录中，过期倒计时: {expired}")
+                else:
+                    logger.info(f"[xbot] 等待登录中，过期倒计时: {expired}")
             except Exception as e:
                 logger.error(f"[xbot] 检查二维码状态异常: {e}")
             time.sleep(1)
